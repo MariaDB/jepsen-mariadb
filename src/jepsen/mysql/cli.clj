@@ -19,14 +19,17 @@
                           [mav :as mav]
                           [nonrepeatable-read :as nonrepeatable-read]]
             [jepsen.mysql.db [maria :as db.maria]
+                             [maria-docker :as db.maria-docker]
                              [mysql :as db.mysql]
-                             [noop :as db.noop]]))
+                             [noop :as db.noop]]
+            [jepsen.net :as net]))
 
 (def db-types
   "A map of DB names to functions that take CLI options and return Jepsen DB
   instances."
   {:none  db.noop/db
    :maria db.maria/db
+   :maria-docker db.maria-docker/db
    :mysql db.mysql/db})
 
 (def workloads
@@ -75,13 +78,16 @@
         workload ((workloads workload-name) opts)
         db       ((db-types (:db opts)) opts)
         os       (case (:db opts)
-                   :none os/noop
+                   (:none :maria-docker) os/noop
                    debian/os)
+        net      (case (:db opts)
+                   :maria-docker net/noop
+                   nil)
         ssh      (case (:db opts)
                    :none {:dummy? true}
                    (:ssh opts))
         nemesis  (case (:db opts)
-                   :none nil
+                   (:none :maria-docker) nil
                    (nc/nemesis-package
                      {:db db
                       :nodes (:nodes opts)
@@ -103,6 +109,7 @@
                        (str/join "," (map name (:nemesis opts))))
             :ssh ssh
             :os os
+            :net net
             :db db
             :checker (checker/compose
                        {:perf (checker/perf
@@ -238,19 +245,21 @@
     :usage "MySQL can get wedged in completely inscrutable ways. This command
            completely uninstalls it on the given nodes."
     :run (fn [{:keys [options]}]
-           (info (pr-str options))
-           (c/on-many (:nodes options)
-                      (info "Wiping")
-                      (c/su
-                        (c/exec "DEBIAN_FRONTEND='noninteractive'"
-                                :apt :remove :-y :--purge
-                                (c/lit "mysql-*")
-                                (c/lit "mariadb-*"))
-                        (c/exec :rm :-rf "/var/lib/mysql"
-                                (c/lit "/var/lib/mysql-*")
-                                "/var/log/mysql"
-                                "/etc/mysql"))
-                      (info "Wiped")))}})
+           (case (:db options)
+             (:mariadb-docker) (info "Wipe nothing in MariaDB Docker container")
+             ((info (pr-str options))
+              (c/on-many (:nodes options)
+                        (info "Wiping")
+                        (c/su
+                          (c/exec "DEBIAN_FRONTEND='noninteractive'"
+                                  :apt :remove :-y :--purge
+                                  (c/lit "mysql-*")
+                                  (c/lit "mariadb-*"))
+                          (c/exec :rm :-rf "/var/lib/mysql"
+                                  (c/lit "/var/lib/mysql-*")
+                                  "/var/log/mysql"
+                                  "/etc/mysql"))
+                        (info "Wiped")))))}})
 
 (defn -main
   "Handles command line arguments. Can either run a test, or a web server for

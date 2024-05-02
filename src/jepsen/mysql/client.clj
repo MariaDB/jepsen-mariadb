@@ -82,9 +82,11 @@
 (defn await-open
   "Waits for a connection to node to become available, returning conn. Helpful
   for starting up."
-  [test node]
+  ([test node]
+       (await-open test node {}))
+  ([test node opts]
   (util/await-fn (fn attempt []
-                   (let [conn (open test node)]
+                   (let [conn (open test node opts)]
                      (try (j/execute-one! conn
                                           ["create table if not exists jepsen_await (id int)"])
                           conn
@@ -93,7 +95,7 @@
                  {:retry-interval 1000
                   :log-interval   60000
                   :log-message    "Waiting for MySQL connection"
-                  :timeout        10000}))
+                  :timeout        10000})))
 
 (defmacro with-errors
   "Takes an operation and a body, turning known errors into :fail or :info ops."
