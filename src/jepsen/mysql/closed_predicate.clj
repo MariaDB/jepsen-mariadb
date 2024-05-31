@@ -54,13 +54,14 @@
 (defn mop!
   "Executes a transactional micro-op on a connection. Returns the completed
   micro-op."
-  [conn test system txn? [f k v]]
+  [conn test system query_id txn? [f k v]]
   (Thread/sleep (long (rand-int 10)))
   (let [table-count (:table-count test default-table-count)]
     [f k (case f
            ; Single-key read
            :r (let [table (table-for table-count k)
-                    r (j/execute! conn [(str "select value from " table
+                    r (j/execute! conn [(str query_id
+                                             "select value from " table
                                              " where `system` = ? and id = ?")
                                         system k]
                                   {:builder-fn rs/as-unqualified-lower-maps})]
@@ -72,7 +73,8 @@
                      rows (mapcat (fn [table]
                                     (j/execute!
                                       conn
-                                      (into [(str "select * from "
+                                      (into [(str query_id
+                                                  "select * from "
                                                   table " where `system` = ? and "
                                                   where)
                                              system]
@@ -84,13 +86,15 @@
 
            ; Insert
            :insert (let [table (table-for table-count k)]
-                     (j/execute! conn [(str "insert into " table
+                     (j/execute! conn [(str query_id
+                                            "insert into " table
                                             " (`system`, id, `value`) values (?, ?, ?)")
                                        system k v])
                      v)
            ; Overwrite
            :w (let [table (table-for table-count k)
-                    res (j/execute-one! conn [(str "update " table
+                    res (j/execute-one! conn [(str query_id
+                                               "update " table
                                                " set `value` = ? where"
                                                " `system` = ? and id = ?")
                                               v system k])]
@@ -100,7 +104,7 @@
 
            ; Delete
            :delete (let [table (table-for table-count k)
-                         res (j/execute-one! conn [(str "delete from " table
+                         res (j/execute-one! conn [(str query_id "delete from " table
                                                         " where `system` = ? and id = ?") system k])]
                      (assert (= 1 (:next.jdbc/update-count res))
                              (str "Expected delete of key " (pr-str k) " = " (pr-str v) " to affect one row, but it deleted " (:next.jdbc/update-count res)))
@@ -140,8 +144,9 @@
             ; cluster and the DB automation isn't wiping the state for us.
             (j/execute! conn [(str "delete from " (table-name i))]))))))
 
-  (invoke! [this test {:keys [f value] :as op}]
-    (let [[system value] value]
+  (invoke! [this test {:keys [index time f value] :as op}]
+    (let [[system value] value
+          query_id (str "/* " index "_" time " */ ")]
       ; One-time connection setup
       (when (compare-and-set! initialized? false true)
         (c/set-transaction-isolation! conn (:isolation test)))
@@ -153,7 +158,8 @@
                   (c/with-logging test [t t]
                     (doseq [[k v] value]
                       (j/execute-one!
-                        t [(str "insert into "
+                        t [(str query_id
+                                "insert into "
                                 (table-for table-count k)
                                 " (`system`, id, `value`) values (?, ?, ?)")
                            system k v]))))
@@ -175,10 +181,12 @@
                                  (j/with-transaction
                                    [t conn {:isolation (:isolation test)}]
                                    (c/with-logging test [t t]
-                                     (mapv (partial mop! t test system true)
+                                     (mapv (partial
+                                             mop! t test system query_id true)
                                            txn)))
                                  (c/with-logging test [conn conn]
-                                   (mapv (partial mop! conn test system false)
+                                   (mapv (partial
+                                           mop! conn test system query_id false)
                                          txn)))]
                  (assoc op
                         :type :ok

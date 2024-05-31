@@ -53,44 +53,45 @@
           (j/execute! conn ["insert into people (id, name, gender) values (?, ?, ?)"
                             0 "moss" "enby"])))))
 
-  (invoke! [this test {:keys [f value] :as op}]
-    (case f
-      :change-name (do (j/execute!
-                         conn ["update people set name = ? where id = ?"
-                               (:name value) (:id value)])
-                       (assoc op :type :ok))
+  (invoke! [this test {:keys [index time f value] :as op}]
+    (let [query_id (str "/* " index "_" time " */ ")]
+      (case f
+        :change-name (do (j/execute!
+                           conn [(str query_id "update people set name = ? where id = ?")
+                                 (:name value) (:id value)])
+                         (assoc op :type :ok))
 
-      :read
-      (j/with-transaction [t conn {:isolation (:isolation test)}]
-        (c/with-logging test [t t]
-          (let [{:keys [id]} value
-                name1 (-> t
-                          (j/execute-one! ["select name from people where id = ?" id])
-                          :people/name)
-                _ (Thread/sleep (long (rand-int 10)))
-                r (j/execute! t ["update people set gender = ? where id = ?"
-                                 (:gender value)
-                                 id])
+        :read
+        (j/with-transaction [t conn {:isolation (:isolation test)}]
+          (c/with-logging test [t t]
+            (let [{:keys [id]} value
+                  name1 (-> t
+                            (j/execute-one! [(str query_id "select name from people where id = ?") id])
+                            :people/name)
+                  _ (Thread/sleep (long (rand-int 10)))
+                  r (j/execute! t [(str query_id "update people set gender = ? where id = ?")
+                                   (:gender value)
+                                   id])
 
-                _ (Thread/sleep (long (rand-int 10)))
-                name2 (-> t
-                          (j/execute-one! ["select name from people where id = ?" id])
-                          :people/name)]
-            (assoc op :type :ok, :value {:id    id
-                                         :name1 name1
-                                         :name2 name2}))))
+                  _ (Thread/sleep (long (rand-int 10)))
+                  name2 (-> t
+                            (j/execute-one! [(str query_id "select name from people where id = ?") id])
+                            :people/name)]
+              (assoc op :type :ok, :value {:id    id
+                                           :name1 name1
+                                           :name2 name2}))))
 
-      :delete
-      (do (j/execute! conn
-                      ["delete from people where id = ?"
-                       (:id value)])
-          (assoc op :type :ok))
+        :delete
+        (do (j/execute! conn
+                        [(str query_id "delete from people where id = ?")
+                         (:id value)])
+            (assoc op :type :ok))
 
-      :insert
-      (do (j/execute! conn
-                      ["insert into people (id, name, gender) values (?, ?, ?)"
-                       (:id value) (:name value) (:gender value)])
-          (assoc op :type :ok))))
+        :insert
+        (do (j/execute! conn
+                        [(str query_id "insert into people (id, name, gender) values (?, ?, ?)")
+                         (:id value) (:name value) (:gender value)])
+            (assoc op :type :ok)))))
 
   (teardown! [_ test])
 

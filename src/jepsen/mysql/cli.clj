@@ -221,6 +221,27 @@
     :parse-fn keyword
     :missing  (str "Must specify a workload: " (cli/one-of workloads))
     :validate [workloads (cli/one-of workloads)]]
+
+   [nil "--dont-teardown" "Don't cleanup before and after testing."
+    :default false]
+
+   [nil "--rr PATH"
+    "Run mariadbd under rr, write rr trace to the directory in the option."
+    :default nil]
+
+   [nil "--mariadb-install-dir PATH" "The directory where mariadb is installed."
+    :default nil]
+
+   [nil "--mariadb-data-dir PATH" "Mariadb data dir."
+    :default nil]
+
+   [nil "--mariadb-tmp-dir PATH" "Mariadb tmp dir."
+    :default "/tmp"]
+
+   [nil "--mariadb-server-number NUMBER" "Mariadb server number."
+    :parse-fn parse-long
+    :default 0]
+
    ])
 
 (defn all-tests

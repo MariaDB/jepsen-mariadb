@@ -49,37 +49,38 @@
           (j/execute! conn ["insert into mav (id, `value`, noop) values (?, ?, ?)" 0 0 0])
           (j/execute! conn ["insert into mav (id, `value`, noop) values (?, ?, ?)" 1 0 0])))))
 
-  (invoke! [this test {:keys [f value] :as op}]
-    (case f
-      :write
-      (j/with-transaction [t conn {:isolation (:isolation test)}]
-        (c/with-logging test [t t]
-          (doseq [id (shuffle [0 1])]
-            (Thread/sleep (long (rand-int 10)))
-            (j/execute! t ["update mav set value = value + 1 where id = ?"
-                           id]))
-          (assoc op :type :ok)))
+  (invoke! [this test {:keys [index time f value] :as op}]
+    (let [query_id (str "/* " index "_" time " */ ")]
+      (case f
+        :write
+        (j/with-transaction [t conn {:isolation (:isolation test)}]
+          (c/with-logging test [t t]
+            (doseq [id (shuffle [0 1])]
+              (Thread/sleep (long (rand-int 10)))
+              (j/execute! t [(str query_id "update mav set value = value + 1 where id = ?")
+                             id]))
+            (assoc op :type :ok)))
 
-      :read
-      (j/with-transaction [t conn {:isolation (:isolation test)}]
-        (c/with-logging test [t t]
-          (let [{:keys [id]} value
-                a1 (-> t
-                       (j/execute-one! ["select value from mav where id = ?" 0])
-                       :mav/value)
-                _ (Thread/sleep (long (rand-int 10)))
-                r (j/execute! t ["update mav set noop = ? where id = ?"
-                                 (rand-int 100) 1])
-                b2 (-> t
-                       (j/execute-one! ["select value from mav where id = ?" 1])
-                       :mav/value)
-                _ (Thread/sleep (long (rand-int 10)))
-                a2 (-> t
-                       (j/execute-one! ["select value from mav where id = ?" 0])
-                       :mav/value)]
-            (assoc op :type :ok, :value {:a1 a1
-                                         :b2 b2
-                                         :a2 a2}))))))
+        :read
+        (j/with-transaction [t conn {:isolation (:isolation test)}]
+          (c/with-logging test [t t]
+            (let [{:keys [id]} value
+                  a1 (-> t
+                         (j/execute-one! [(str query_id "select value from mav where id = ?") 0])
+                         :mav/value)
+                  _ (Thread/sleep (long (rand-int 10)))
+                  r (j/execute! t [(str query_id "update mav set noop = ? where id = ?")
+                                   (rand-int 100) 1])
+                  b2 (-> t
+                         (j/execute-one! [(str query_id "select value from mav where id = ?") 1])
+                         :mav/value)
+                  _ (Thread/sleep (long (rand-int 10)))
+                  a2 (-> t
+                         (j/execute-one! [(str query_id "select value from mav where id = ?") 0])
+                         :mav/value)]
+              (assoc op :type :ok, :value {:a1 a1
+                                           :b2 b2
+                                           :a2 a2})))))))
 
   (teardown! [_ test])
 

@@ -6,6 +6,9 @@ max_connections = 4096
 default_authentication_plugin=mysql_native_password
 
 [mariadb]
+tmpdir = %TMPDIR%
+socket = %SOCKET%
+port = %PORT%
 pid_file=%PID_FILE%
 log_error=%ERROR_LOG%
 datadir=%DATA_DIR%

@@ -33,10 +33,11 @@
 (defn append-using-on-dup!
   "Appends an element to a key using an INSERT ... ON DUPLICATE KEY UPDATE
   statement."
-  [conn test table k e]
+  [conn test query_id table k e]
   (j/execute!
     conn
-    [(str "insert into " table " as t"
+    [(str query_id
+          "insert into " table " as t"
           " (id, sk, val) values (?, ?, ?)"
           " on duplicate key update"
           " val = CONCAT(t.val, ',', ?)")
@@ -48,29 +49,32 @@
   due to a duplicate key, it'll break the rest of the transaction, assuming
   we're in a transaction, so we establish a savepoint before inserting and roll
   back to it on failure."
-  [conn test txn? table k e]
+  [conn test query_id txn? table k e]
   (try
     ;(info (if txn? "" "not") "in transaction")
-    (when txn? (j/execute! conn ["savepoint upsert"]))
+    (when txn? (j/execute! conn [(str query_id "savepoint upsert")]))
     (j/execute! conn
-                [(str "insert into " table " (id, sk, val)"
+                [(str query_id "insert into " table " (id, sk, val)"
                       " values (?, ?, ?)")
                  k k e])
-    (when txn? (j/execute! conn ["release savepoint upsert"]))
+    (when txn? (j/execute! conn [(str query_id "release savepoint upsert")]))
     true
     (catch java.sql.SQLIntegrityConstraintViolationException e
       (if (re-find #"Duplicate entry" (.getMessage e))
         (do (info (if txn? "txn") "insert failed: " (.getMessage e))
-            (when txn? (j/execute! conn ["rollback to savepoint upsert"]))
+            (when txn? (j/execute! conn
+                                   [(str query_id
+                                        "rollback to savepoint upsert")]))
             false)
         (throw e)))))
 
 (defn update!
   "Performs an update of a key k, adding element e. Returns true if the update
   succeeded, false otherwise."
-  [conn test table k e]
+  [conn test query_id table k e]
   (let [res (-> conn
-                (j/execute-one! [(str "update " table " set val = CONCAT(val, ',', ?)"
+                (j/execute-one! [(str query_id
+                                      "update " table " set val = CONCAT(val, ',', ?)"
                                       " where id = ?") e k]))]
     (-> res
         :next.jdbc/update-count
@@ -79,13 +83,14 @@
 (defn mop!
   "Executes a transactional micro-op on a connection. Returns the completed
   micro-op."
-  [conn test txn? [f k v]]
+  [conn test query_id txn? [f k v]]
   (let [table-count (:table-count test default-table-count)
         table (table-for table-count k)]
     (Thread/sleep (long (rand-int 10)))
     [f k (case f
            :r (let [r (j/execute! conn
-                                  [(str "select (val) from " table " where "
+                                  [(str query_id
+                                        "select (val) from " table " where "
                                         ;(if (< (rand) 0.5) "id" "sk")
                                         "id"
                                         " = ? ")
@@ -98,14 +103,14 @@
            (let [vs (str v)]
              (if (:on-conflict test)
                ; Use ON CONFLICT
-               (append-using-on-dup! conn test table k vs)
+               (append-using-on-dup! conn test query_id table k vs)
                ; Try an update, and if that fails, back off to an insert.
-               (or (update! conn test table k vs)
+               (or (update! conn test query_id table k vs)
                    ; No dice, fall back to an insert
-                   (insert! conn test txn? table k vs)
+                   (insert! conn test query_id txn? table k vs)
                    ; OK if THAT failed then we probably raced with another
                    ; insert; let's try updating again.
-                   (update! conn test table k vs)
+                   (update! conn test query_id table k vs)
                    ; And if THAT failed, all bets are off. This happens even
                    ; under SERIALIZABLE, but I don't think it technically
                    ; VIOLATES serializability.
@@ -148,12 +153,13 @@
     (c/with-errors op
       (let [txn       (:value op)
             use-txn?  (< 1 (count txn))
+            query_id  (str "/* " (:index op) "_" (:time op) " */ ")
             txn'      (if use-txn?
                       ;(if true
                         (j/with-transaction [t conn
                                              {:isolation (:isolation test)}]
-                          (mapv (partial mop! t test true) txn))
-                        (mapv (partial mop! conn test false) txn))]
+                          (mapv (partial mop! t test query_id true) txn))
+                        (mapv (partial mop! conn test query_id false) txn))]
         (assoc op :type :ok, :value txn'))))
 
   (teardown! [_ test])
